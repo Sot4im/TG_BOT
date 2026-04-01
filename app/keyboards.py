@@ -1,8 +1,106 @@
-from aiogram.types import ReplyKeyboardMarkup, keyboard_button, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-main=ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text="Каталог")],
-    [KeyboardButton(text="Начинки"), KeyboardButton(text="Вес")],
-    [KeyboardButton(text="Контакты")]
+class Menus:
+    @staticmethod
+    def create(buttons: list, resize: bool = True) -> ReplyKeyboardMarkup:
+        keyboard = []
+        for row in buttons:
+            keyboard.append([KeyboardButton(text=btn) for btn in row])
+        return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=resize)
+
+# Главное меню
+main_menu = Menus.create([
+    ["🛒 Каталог", "❤️ Избранное"],
+    ["🛍️ Корзина", "📦 Мои заказы"],
+    ["🎀 Обо мне", "👤 Контакты"]
 ])
 
+# Каталог
+catalog = Menus.create([
+    ["🍰 Торты"],
+    ["🍩 Штучные десерты"],
+    ["🍥 Меренговые рулеты"],
+    ["❤️ Избранное", "🛍️ Корзина"],
+    ["🔙 Назад в главное меню"]
+])
+
+# Меню тортов
+cakes_menu = Menus.create([
+    ["🍰 Бенто торты"],
+    ["🎂 Торты от 1кг"],
+    ["❤️ Избранное", "🛍️ Корзина"],
+    ["🔙 Назад в каталог"]
+])
+
+# Меню бенто-тортов
+bento_menu = Menus.create([
+    ["🍒 Вишня-шоколад (1500₽)", "🍓 Ягода-ваниль (1500₽)"],
+    ["🍫 Карамель с арахисом (1500₽)", "🍌 Банан-карамель (1500₽)"],
+    ["❤️ Избранное", "🛍️ В корзину"],
+    ["🔙 Назад в каталог"]
+])
+
+# Меню выбора веса для тортов
+weight_menu = Menus.create([
+    ["⚖️ 1 кг", "⚖️ 1.5 кг"],
+    ["⚖️ 2 кг", "⚖️ 2.5 кг"],
+    ["⚖️ 3 кг"],
+    ["🔙 Назад в меню тортов"]
+])
+
+# Меню тортов от 1 кг
+choose_cake_menu = Menus.create([
+    ["🍯 Медовик (1800₽/кг)", "🍒 Вишня-шоколад (1900₽/кг)"],
+    ["❤️ Красный бархат (2100₽/кг)", "🍫 Карамель (2000₽/кг)"],
+    ["🍓 Ягода-ваниль (2000₽/кг)", "🥛 Молочная девочка (1900₽/кг)"],
+    ["❤️ Избранное", "🛍️ В корзину"],
+    ["🔙 Назад в каталог"]
+])
+
+# Меню штучных десертов
+boxed_desserts_menu = Menus.create([
+    ["⚪ Mochi"],
+    ["🍥 Macarons"],
+    ["🍩 Donut cake"],
+    ["❤️ Избранное", "🛍️ Корзина"],
+    ["🔙 Назад в каталог"]
+])
+
+
+
+meringue_menu = Menus.create([
+    ["🍓 Ягодный рулет (450₽)", "🍫 Шоколадный рулет (450₽)"],
+    ["🍯 Карамельный рулет (480₽)", "💚 Фисташковый рулет (520₽)"],
+    ["❤️ Избранное", "🛍️ В корзину"],
+    ["🔙 Назад в каталог"]
+])
+
+# Меню корзины
+cart_menu = Menus.create([
+    ["📝 Оформить заказ"],
+    ["🗑️ Очистить корзину"],
+    ["🔙 Назад в каталог"]
+])
+
+# Меню оформления заказа
+order_menu = Menus.create([
+    ["🚚 Доставка", "🏪 Самовывоз"],
+    ["🔙 Назад в корзину"]
+])
+
+# Меню выбора даты
+date_menu = Menus.create([
+    ["📅 Ввести дату вручную"],
+    ["🔙 Назад в корзину"]
+])
+
+# Меню подтверждения заказа
+confirm_order_menu = Menus.create([
+    ["✅ Подтвердить заказ"],
+    ["❌ Отменить"]
+])
+
+# Клавиатура для возврата в каталог
+back_to_catalog_only = Menus.create([
+    ["🔙 Назад в каталог"]
+])
