@@ -42,8 +42,7 @@ ABOUT_TEXT = """👩‍🍳 Обо мне
 CONTACTS_TEXT = """📱 Контакты
 
 📞 Телефон: +7 (999) 123-45-67
-📷 Instagram: @confectioner
-💬 Telegram: @confectioner_tg
+💬 Telegram: @CBM_KZN
 
 📍 Адрес самовывоза:
-г. Москва, ул. Кондитерская, д. 10"""
+г. Казань, ул. Кондитерская, д. 10"""
