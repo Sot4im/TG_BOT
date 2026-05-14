@@ -1,8 +1,8 @@
 import os
 
-TOKEN = "8505103955:AAEUrj6yjqHn6HzIC2pAxiWLDNLVJIMTN0c"
+TOKEN = 
 
-ADMIN_ID =2141337014
+ADMIN_ID =
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEDIA_DIR = os.path.join(BASE_DIR, 'media')
