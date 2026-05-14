@@ -1,14 +1,13 @@
-# app/order_handler.py
 import logging
-import re
-from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardRemove
 import app.keyboards as kb
-from app.storage import get_cart
+from app.database import db
 from config import ADMIN_ID
+from datetime import datetime, timedelta
+import re
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -17,67 +16,73 @@ logger = logging.getLogger(__name__)
 class OrderStates(StatesGroup):
     choosing_delivery = State()
     entering_address = State()
-    choosing_date = State()
+    choosing_date = State()  # Теперь пользователь сам вводит дату
     entering_time = State()
     confirming = State()
 
 
-def validate_date(date_text: str) -> bool:
+def validate_date(date_string: str) -> bool:
     """Проверка корректности даты"""
-    # Проверяем формат ДД.ММ.ГГГГ
-    pattern = r'^\d{2}\.\d{2}\.\d{4}$'
-    if not re.match(pattern, date_text):
-        return False
+    # Поддерживаемые форматы: ДД.ММ.ГГГГ или ДД-ММ-ГГГГ или ДД/ММ/ГГГГ
+    patterns = [
+        r'^(\d{2})\.(\d{2})\.(\d{4})$',  # 31.12.2024
+        r'^(\d{2})-(\d{2})-(\d{4})$',  # 31-12-2024
+        r'^(\d{2})/(\d{2})/(\d{4})$',  # 31/12/2024
+        r'^(\d{4})-(\d{2})-(\d{2})$',  # 2024-12-31
+    ]
 
-    try:
+    for pattern in patterns:
+        match = re.match(pattern, date_string)
+        if match:
+            if pattern == r'^(\d{4})-(\d{2})-(\d{2})$':
+                year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            else:
+                day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
 
-        day, month, year = map(int, date_text.split('.'))
-        input_date = datetime(year, month, day)
-
-        # Проверяем, что дата не в прошлом
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        if input_date < today:
-            return False
-
-        # Проверяем, что дата не слишком далеко (максимум 30 дней)
-        max_date = today + timedelta(days=30)
-        if input_date > max_date:
-            return False
-
-        return True
-    except:
-        return False
+            # Проверяем, существует ли такая дата
+            try:
+                date_obj = datetime(year, month, day)
+                # Проверяем, что дата не в прошлом
+                if date_obj.date() >= datetime.now().date():
+                    return True
+                else:
+                    return False
+            except ValueError:
+                return False
+    return False
 
 
-def validate_time(time_text: str) -> bool:
-    """Проверка корректности времени"""
-    pattern = r'^\d{2}:\d{2}$'
-    if not re.match(pattern, time_text):
-        return False
+def format_date_for_display(date_string: str) -> str:
+    """Форматирует дату для отображения"""
+    # Пробуем разные форматы
+    patterns = [
+        (r'^(\d{2})\.(\d{2})\.(\d{4})$', '{}.{}.{}'),
+        (r'^(\d{2})-(\d{2})-(\d{4})$', '{}.{}.{}'),
+        (r'^(\d{2})/(\d{2})/(\d{4})$', '{}.{}.{}'),
+        (r'^(\d{4})-(\d{2})-(\d{2})$', '{}.{}.{}'),
+    ]
 
-    try:
-        hour, minute = map(int, time_text.split(':'))
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return True
-        return False
-    except:
-        return False
+    for pattern, output_format in patterns:
+        match = re.match(pattern, date_string)
+        if match:
+            if pattern == r'^(\d{4})-(\d{2})-(\d{2})$':
+                return output_format.format(match.group(3), match.group(2), match.group(1))
+            else:
+                return output_format.format(match.group(1), match.group(2), match.group(3))
+    return date_string
 
 
 @router.message(F.text == "📝 Оформить заказ")
 async def start_order(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    cart = get_cart(user_id)
+    cart_items = db.get_cart(user_id)
 
-    if cart.is_empty:
+    if not cart_items:
         await message.answer("❌ Корзина пуста! Добавьте товары в корзину.", reply_markup=kb.catalog)
         return
 
     await state.set_state(OrderStates.choosing_delivery)
-    await message.answer(
-        "🚚 Выберите способ получения:",
-        reply_markup=kb.order_menu
-    )
+    await message.answer("🚚 Выберите способ получения:", reply_markup=kb.order_menu)
 
 
 @router.message(OrderStates.choosing_delivery, F.text.in_(["🚚 Доставка", "🏪 Самовывоз"]))
@@ -88,19 +93,28 @@ async def process_delivery(message: Message, state: FSMContext):
     if delivery == "delivery":
         await state.set_state(OrderStates.entering_address)
         await message.answer(
-            "📍 Введите адрес доставки (город, улица, дом, квартира):\n\n"
-            "Пример: г. Москва, ул. Ленина, д. 10, кв. 5",
+            "📍 Введите адрес доставки (город, улица, дом, квартира):",
             reply_markup=ReplyKeyboardRemove()
         )
     else:
         await state.update_data(address="Самовывоз: г. Москва, ул. Кондитерская, д. 10")
         await state.set_state(OrderStates.choosing_date)
+
+        # Показываем примеры форматов даты
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
+        day_after = (datetime.now() + timedelta(days=2)).strftime("%d.%m.%Y")
+
         await message.answer(
-            "📅 Укажите дату самовывоза:\n\n"
-            "Введите дату в формате ДД.ММ.ГГГГ\n"
-            "Например: 15.05.2026\n\n"
-            "⚠️ Заказы принимаются минимум за 2 дня до даты получения",
-            reply_markup=kb.date_menu
+            f"📅 Введите желаемую дату получения заказа\n\n"
+            f"Примеры форматов:\n"
+            f"• 31.12.2024\n"
+            f"• 31-12-2024\n"
+            f"• 31/12/2024\n"
+            f"• 2024-12-31\n\n"
+            f"📌 Минимальная дата: {tomorrow}\n"
+            f"📌 Рекомендуемая дата: {tomorrow} или {day_after}\n\n"
+            f"❗ Дата не может быть сегодня или в прошлом",
+            reply_markup=kb.date_input_menu
         )
 
 
@@ -108,156 +122,106 @@ async def process_delivery(message: Message, state: FSMContext):
 async def process_address(message: Message, state: FSMContext):
     await state.update_data(address=message.text)
     await state.set_state(OrderStates.choosing_date)
+
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
+    day_after = (datetime.now() + timedelta(days=2)).strftime("%d.%m.%Y")
+
     await message.answer(
-        "📅 Укажите желаемую дату получения:\n\n"
-        "Введите дату в формате ДД.ММ.ГГГГ\n"
-        "Например: 15.05.2026\n\n"
-        "⚠️ Минимальный срок изготовления - 2 дня\n"
-        "⚠️ Заказы принимаются на даты не позднее 30 дней",
-        reply_markup=kb.date_menu
+        f"📅 Введите желаемую дату получения заказа\n\n"
+        f"Примеры форматов:\n"
+        f"• 31.12.2024\n"
+        f"• 31-12-2024\n"
+        f"• 31/12/2024\n"
+        f"• 2024-12-31\n\n"
+        f"📌 Минимальная дата: {tomorrow}\n"
+        f"📌 Рекомендуемая дата: {tomorrow} или {day_after}\n\n"
+        f"❗ Дата не может быть сегодня или в прошлом",
+        reply_markup=kb.date_input_menu
     )
-
-
-@router.message(OrderStates.choosing_date, F.text == "📅 Ввести дату вручную")
-async def prompt_manual_date(message: Message, state: FSMContext):
-    await message.answer(
-        "📅 Введите дату в формате ДД.ММ.ГГГГ\n\n"
-        "Примеры:\n"
-        "• 15.05.2026 - 15 мая 2026 года\n"
-        "• 20.12.2026 - 20 декабря 2026 года\n\n"
-        "⚠️ Важно:\n"
-        "• Дата должна быть не раньше, чем через 2 дня\n"
-        "• Дата не должна быть позже, чем через 30 дней\n"
-        "• Используйте точки для разделения",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-
-@router.message(OrderStates.choosing_date, F.text == "🔙 Назад в корзину")
-async def back_to_cart_from_date(message: Message, state: FSMContext):
-    await state.clear()
-    user_id = message.from_user.id
-    cart = get_cart(user_id)
-
-    if cart.is_empty:
-        await message.answer("🛍️ Корзина пуста", reply_markup=kb.catalog)
-        return
-
-    text = "🛍️ КОРЗИНА\n\n"
-    for item in cart.items:
-        if item.weight_kg:
-            text += f"• {item.display_name} — {item.total_price}₽ ({item.product.price}₽/кг)\n"
-        else:
-            text += f"• {item.display_name} — {item.total_price}₽\n"
-    text += f"\n💰 ИТОГО: {cart.total}₽"
-
-    await message.answer(text, reply_markup=kb.cart_menu)
 
 
 @router.message(OrderStates.choosing_date, F.text)
 async def process_date(message: Message, state: FSMContext):
     date_text = message.text.strip()
 
-    # Проверяем корректность даты
-    if not validate_date(date_text):
+    # Проверка на кнопки с датами
+    if date_text == "📅 Завтра":
+        date_obj = datetime.now() + timedelta(days=1)
+        formatted_date = date_obj.strftime("%d.%m.%Y")
+        await state.update_data(date=formatted_date)
+        await state.set_state(OrderStates.entering_time)
         await message.answer(
-            "❌ Неверный формат даты!\n\n"
-            "Пожалуйста, введите дату в формате ДД.ММ.ГГГГ\n"
-            "Например: 15.05.2026\n\n"
-            "Важно:\n"
-            "• Дата должна быть не раньше, чем через 2 дня\n"
-            "• Дата не должна быть позже, чем через 30 дней\n"
-            "• Используйте точки для разделения",
-            reply_markup=kb.date_menu
+            f"✅ Дата выбрана: {formatted_date}\n\n"
+            f"⏰ Введите время (например: 15:00):",
+            reply_markup=ReplyKeyboardRemove()
         )
         return
 
-    # Проверяем, что дата не раньше чем через 2 дня
-    try:
-        day, month, year = map(int, date_text.split('.'))
-        input_date = datetime(year, month, day)
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        min_date = today + timedelta(days=2)
-
-        if input_date < min_date:
-            await message.answer(
-                f"❌ Минимальный срок изготовления - 2 дня!\n\n"
-                f"Вы выбрали: {date_text}\n"
-                f"Минимальная дата: {min_date.strftime('%d.%m.%Y')}\n\n"
-                f"Пожалуйста, выберите другую дату:",
-                reply_markup=kb.date_menu
-            )
-            return
-
-        # Сохраняем дату
-        await state.update_data(date=date_text)
+    elif date_text == "📅 Послезавтра":
+        date_obj = datetime.now() + timedelta(days=2)
+        formatted_date = date_obj.strftime("%d.%m.%Y")
+        await state.update_data(date=formatted_date)
         await state.set_state(OrderStates.entering_time)
         await message.answer(
-            "⏰ Введите желаемое время получения:\n\n"
-            "Введите время в формате ЧЧ:ММ\n"
-            "Например: 15:00 или 18:30\n\n"
-            "🕐 Режим работы: с 10:00 до 20:00",
+            f"✅ Дата выбрана: {formatted_date}\n\n"
+            f"⏰ Введите время (например: 15:00):",
             reply_markup=ReplyKeyboardRemove()
         )
+        return
 
-    except Exception as e:
-        logger.error(f"Ошибка обработки даты: {e}")
+    # Проверяем корректность введенной даты
+    if not validate_date(date_text):
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
         await message.answer(
-            "❌ Ошибка при обработке даты.\n"
-            "Пожалуйста, попробуйте еще раз в формате ДД.ММ.ГГГГ",
-            reply_markup=kb.date_menu
+            f"❌ Неверный формат даты или дата в прошлом!\n\n"
+            f"Пожалуйста, введите дату в одном из форматов:\n"
+            f"• 31.12.2024\n"
+            f"• 31-12-2024\n"
+            f"• 31/12/2024\n"
+            f"• 2024-12-31\n\n"
+            f"📌 Дата не может быть сегодня или в прошлом\n"
+            f"📌 Минимальная дата: {tomorrow}\n\n"
+            f"Или используйте кнопки:",
+            reply_markup=kb.date_input_menu
         )
+        return
+
+    # Сохраняем дату
+    formatted_date = format_date_for_display(date_text)
+    await state.update_data(date=formatted_date)
+
+    await state.set_state(OrderStates.entering_time)
+    await message.answer(
+        f"✅ Дата выбрана: {formatted_date}\n\n"
+        f"⏰ Введите время (например: 15:00):",
+        reply_markup=ReplyKeyboardRemove()
+    )
 
 
 @router.message(OrderStates.entering_time, F.text)
 async def process_time(message: Message, state: FSMContext):
-    time_text = message.text.strip()
-
-    # Проверяем корректность времени
-    if not validate_time(time_text):
-        await message.answer(
-            "❌ Неверный формат времени!\n\n"
-            "Пожалуйста, введите время в формате ЧЧ:ММ\n"
-            "Например: 15:00 или 18:30\n\n"
-            "Часы: от 00 до 23\n"
-            "Минуты: от 00 до 59"
-        )
-        return
-
-    # Проверяем, что время в рабочем диапазоне
-    try:
-        hour, minute = map(int, time_text.split(':'))
-        if hour < 10 or hour > 20:
-            await message.answer(
-                "❌ Время вне рабочего диапазона!\n\n"
-                "🕐 Режим работы: с 10:00 до 20:00\n\n"
-                "Пожалуйста, выберите время в этом диапазоне:"
-            )
-            return
-    except:
-        pass
-
-    await state.update_data(time=time_text)
+    await state.update_data(time=message.text)
 
     data = await state.get_data()
     user_id = message.from_user.id
-    cart = get_cart(user_id)
+    cart_items = db.get_cart(user_id)
+    cart_total = db.get_cart_total(user_id)
 
     # Формируем сообщение для подтверждения
-    confirm = "📦 ПРОВЕРЬТЕ ЗАКАЗ\n\n"
-    confirm += f"🚚 Способ: {'Доставка' if data['delivery_type'] == 'delivery' else 'Самовывоз'}\n"
+    delivery_type_text = "Доставка" if data['delivery_type'] == 'delivery' else "Самовывоз"
+
+    confirm = f"📦 ПРОВЕРЬТЕ ЗАКАЗ\n\n"
+    confirm += f"🚚 Способ: {delivery_type_text}\n"
     confirm += f"📍 Адрес: {data['address']}\n"
-    confirm += f"📅 Дата получения: {data['date']}\n"
+    confirm += f"📅 Дата: {data['date']}\n"
     confirm += f"⏰ Время: {data['time']}\n\n"
     confirm += "🛍️ Состав:\n"
 
-    for item in cart.items:
-        if item.weight_kg:
-            confirm += f"• {item.display_name} — {item.total_price}₽ ({item.product.price}₽/кг)\n"
-        else:
-            confirm += f"• {item.display_name} — {item.total_price}₽\n"
+    for item in cart_items:
+        total = item['price'] * item['quantity']
+        confirm += f"• {item['name']} — {item['price']}₽ x {item['quantity']} = {total}₽\n"
 
-    confirm += f"\n💰 ИТОГО: {cart.total}₽"
+    confirm += f"\n💰 ИТОГО: {cart_total}₽"
 
     await state.set_state(OrderStates.confirming)
     await message.answer(confirm, reply_markup=kb.confirm_order_menu)
@@ -266,67 +230,74 @@ async def process_time(message: Message, state: FSMContext):
 @router.message(OrderStates.confirming, F.text == "✅ Подтвердить заказ")
 async def confirm_order(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    cart = get_cart(user_id)
+    cart_items = db.get_cart(user_id)
+    cart_total = db.get_cart_total(user_id)
     data = await state.get_data()
 
+    # Сохраняем заказ в БД
+    order_id = db.create_order(user_id, {
+        "delivery_type": data['delivery_type'],
+        "address": data['address'],
+        "delivery_date": data['date'],
+        "delivery_time": data['time'],
+        "total_amount": cart_total,
+        "comment": ""
+    })
+
+    # Получаем номер заказа
+    order_details = db.get_order_details(order_id)
+    order_number = order_details['order_number']
+
     # Формируем сообщение для кондитера
-    order_text = "🆕 НОВЫЙ ЗАКАЗ!\n\n"
+    delivery_type_text = "Доставка" if data['delivery_type'] == 'delivery' else "Самовывоз"
+
+    order_text = f"🆕 НОВЫЙ ЗАКАЗ!\n\n"
     order_text += f"👤 Клиент: @{message.from_user.username or 'нет username'}\n"
     order_text += f"🆔 ID: {user_id}\n"
-    order_text += f"📅 Время заказа: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-    order_text += f"🚚 Способ: {'Доставка' if data['delivery_type'] == 'delivery' else 'Самовывоз'}\n"
+    order_text += f"📅 Время заказа: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+    order_text += f"🔢 Номер заказа: {order_number}\n\n"
+    order_text += f"🚚 Способ: {delivery_type_text}\n"
     order_text += f"📍 Адрес: {data['address']}\n"
     order_text += f"📅 Дата получения: {data['date']}\n"
     order_text += f"⏰ Время: {data['time']}\n\n"
     order_text += "🛍️ СОСТАВ ЗАКАЗА:\n"
 
-    for item in cart.items:
-        if item.weight_kg:
-            order_text += f"• {item.display_name} — {item.weight_kg}кг = {item.total_price}₽\n"
-        else:
-            order_text += f"• {item.display_name} — {item.total_price}₽\n"
+    for item in cart_items:
+        total = item['price'] * item['quantity']
+        order_text += f"• {item['name']} — {item['price']}₽ x {item['quantity']} = {total}₽\n"
 
-    order_text += f"\n💰 ИТОГО: {cart.total}₽"
+    order_text += f"\n💰 ИТОГО: {cart_total}₽"
 
     # Отправляем кондитеру
     try:
-        logger.info(f"🔄 Отправка заказа админу {ADMIN_ID}...")
+        logger.info(f"🔄 Отправка заказа #{order_number} админу {ADMIN_ID}...")
         await message.bot.send_message(
             chat_id=ADMIN_ID,
             text=order_text
         )
-        logger.info(f"✅ Заказ успешно отправлен!")
+        logger.info(f"✅ Заказ #{order_number} успешно отправлен!")
 
         # Подтверждение пользователю
         await message.answer(
-            f"✅ ЗАКАЗ ПРИНЯТ!\n\n"
-            f"📅 Дата получения: {data['date']}\n"
-            f"⏰ Время: {data['time']}\n"
-            f"💰 Сумма: {cart.total}₽\n\n"
+            f"✅ ЗАКАЗ #{order_number} ПРИНЯТ!\n\n"
             f"Спасибо за заказ! Кондитер свяжется с вами в ближайшее время.\n"
-            f"По всем вопросам: @CBM_KZN",
+            f"Номер заказа: {order_number}\n"
+            f"Дата получения: {data['date']}\n"
+            f"Время: {data['time']}",
             reply_markup=kb.main_menu
         )
 
     except Exception as e:
         logger.error(f"❌ Ошибка отправки: {e}")
-
-        # Пробуем отправить упрощенную версию
-        try:
-            simple_text = f"Новый заказ от пользователя {user_id} на сумму {cart.total}₽"
-            await message.bot.send_message(ADMIN_ID, simple_text)
-            logger.info("✅ Упрощенная версия отправлена")
-        except:
-            logger.error("❌ Не удалось отправить даже упрощенную версию")
-
         await message.answer(
-            "❌ Произошла ошибка при отправке заказа.\n"
-            "Пожалуйста, свяжитесь с кондитером напрямую: @confectioner",
+            f"❌ Произошла ошибка при отправке заказа #{order_number}.\n"
+            f"Пожалуйста, свяжитесь с кондитером напрямую: @confectioner\n"
+            f"И сообщите номер заказа: {order_number}",
             reply_markup=kb.main_menu
         )
 
     # Очищаем корзину и состояние
-    cart.clear()
+    db.clear_cart(user_id)
     await state.clear()
 
 
@@ -340,19 +311,17 @@ async def cancel_order(message: Message, state: FSMContext):
 async def back_to_cart(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
-    cart = get_cart(user_id)
+    cart_items = db.get_cart(user_id)
 
-    if cart.is_empty:
+    if not cart_items:
         await message.answer("🛍️ Корзина пуста", reply_markup=kb.catalog)
         return
 
     text = "🛍️ КОРЗИНА\n\n"
-    for item in cart.items:
-        if item.weight_kg:
-            text += f"• {item.display_name} — {item.total_price}₽ ({item.product.price}₽/кг)\n"
-        else:
-            text += f"• {item.display_name} — {item.total_price}₽\n"
-    text += f"\n💰 ИТОГО: {cart.total}₽"
+    for item in cart_items:
+        total = item['price'] * item['quantity']
+        text += f"• {item['name']} — {item['price']}₽ x {item['quantity']} = {total}₽\n"
+    text += f"\n💰 ИТОГО: {db.get_cart_total(user_id)}₽"
 
     await message.answer(text, reply_markup=kb.cart_menu)
 
