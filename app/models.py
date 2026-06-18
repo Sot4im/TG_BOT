@@ -66,17 +66,3 @@ class Cart:
     def is_empty(self) -> bool:
         return len(self.items) == 0
 
-
-@dataclass
-class Favorites:
-    """Избранное пользователя"""
-    user_id: int
-    product_ids: List[str] = field(default_factory=list)
-
-    def add(self, product_id: str):
-        if product_id not in self.product_ids:
-            self.product_ids.append(product_id)
-
-    def remove(self, product_id: str):
-        if product_id in self.product_ids:
-            self.product_ids.remove(product_id)

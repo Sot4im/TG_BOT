@@ -186,31 +186,6 @@ async def add_to_cart_prompt(message: Message):
         "Корзина",
         reply_markup=kb.cart_menu
     )
-
-
-@router.message(F.text == "❤️ Избранное")
-async def show_favorites(message: Message):
-    user_id = message.from_user.id
-    await safe_delete(message)
-
-    favorites = db.get_favorites_with_details(user_id)
-
-    if not favorites:
-        sent = await message.answer(
-            "❤️ В избранном пока пусто",
-            reply_markup=kb.catalog
-        )
-        user_messages[user_id] = sent
-        return
-
-    text = "❤️ *ИЗБРАННОЕ*\n\n"
-    for item in favorites:
-        text += f"• {item['name']} — {item['price']}₽\n"
-
-    sent = await message.answer(text, parse_mode="Markdown", reply_markup=kb.catalog)
-    user_messages[user_id] = sent
-
-
 @router.message(F.text == "🛍️ Корзина")
 async def show_cart(message: Message):
     user_id = message.from_user.id

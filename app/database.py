@@ -61,19 +61,6 @@ class Database:
                 UNIQUE(user_id, product_id)
             )
         ''')
-
-        # Таблица избранного
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS favorites (
-                user_id INTEGER NOT NULL,
-                product_id TEXT NOT NULL,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, product_id),
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (product_id) REFERENCES products(id)
-            )
-        ''')
-
         # Таблица заказов
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS orders (
